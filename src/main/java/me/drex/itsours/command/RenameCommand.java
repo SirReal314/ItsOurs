@@ -2,50 +2,51 @@ package me.drex.itsours.command;
 
 import com.mojang.brigadier.arguments.StringArgumentType;
 import com.mojang.brigadier.builder.LiteralArgumentBuilder;
-import com.mojang.brigadier.builder.RequiredArgumentBuilder;
 import com.mojang.brigadier.exceptions.CommandSyntaxException;
-import com.mojang.brigadier.exceptions.SimpleCommandExceptionType;
-import me.drex.itsours.ItsOursMod;
+import me.drex.itsours.ItsOurs;
 import me.drex.itsours.claim.AbstractClaim;
-import me.drex.itsours.claim.Subzone;
-import me.drex.itsours.user.ClaimPlayer;
-import me.drex.itsours.util.Color;
-import me.drex.itsours.util.TextComponentUtil;
-import net.kyori.adventure.text.Component;
-import net.kyori.adventure.text.TextComponent;
+import me.drex.itsours.claim.ClaimList;
+import me.drex.itsours.claim.permission.PermissionManager;
+import me.drex.itsours.claim.permission.util.Modify;
+import me.drex.itsours.command.argument.ClaimArgument;
+import me.lucko.fabric.api.permissions.v0.Permissions;
 import net.minecraft.server.command.ServerCommandSource;
+import net.minecraft.text.Text;
 
-public class RenameCommand extends Command {
+import static net.minecraft.server.command.CommandManager.argument;
 
-    public static void register(LiteralArgumentBuilder<ServerCommandSource> literal) {
-        RequiredArgumentBuilder<ServerCommandSource, String> newOwner = RequiredArgumentBuilder.argument("newName", StringArgumentType.word());
-        newOwner.executes(ctx -> rename(ctx.getSource(), getClaim(ctx), StringArgumentType.getString(ctx, "newName")));
-        RequiredArgumentBuilder<ServerCommandSource, String> claim = permissionClaimArgument("modify.name");
-        claim.then(newOwner);
-        LiteralArgumentBuilder<ServerCommandSource> command = LiteralArgumentBuilder.literal("rename");
-        command.then(claim);
-        literal.then(command);
+public class RenameCommand extends AbstractCommand {
+
+    public static final RenameCommand INSTANCE = new RenameCommand();
+
+    private RenameCommand() {
+        super("rename");
     }
 
-    public static int rename(ServerCommandSource source, AbstractClaim claim, String newName) throws CommandSyntaxException {
-        validatePermission(claim, source.getPlayer().getUuid(), "modify.name");
-        if (claim instanceof Subzone) {
-            AbstractClaim parent = ((Subzone) claim).getParent();
-            for (Subzone subzone : parent.getSubzones()) {
-                if (subzone.getName().equals(newName)) throw new SimpleCommandExceptionType(TextComponentUtil.error("Claim name is already taken")).create();
-            }
+    @Override
+    protected void register(LiteralArgumentBuilder<ServerCommandSource> literal) {
+        literal
+                .then(
+                        ClaimArgument.ownClaims()
+                                .then(
+                                        argument("newName", StringArgumentType.string())
+                                                .executes(ctx -> executeRename(ctx.getSource(), ClaimArgument.getClaim(ctx), StringArgumentType.getString(ctx, "newName")))
+                                )
+                );
+    }
+
+    private int executeRename(ServerCommandSource src, AbstractClaim claim, String newName) throws CommandSyntaxException {
+        if (claim.getOwner().equals(src.getEntityOrThrow().getUuid()) || ItsOurs.hasPermission(src, "rename")) {
+            if (AbstractClaim.isNameInvalid(newName)) throw ClaimArgument.INVALID_NAME;
+            if (ClaimList.INSTANCE.getClaim(newName).isPresent()) throw ClaimArgument.NAME_TAKEN;
+            String originalName = claim.getFullName();
+            claim.setName(newName);
+            src.sendFeedback(Text.translatable("text.itsours.commands.rename.success", originalName, newName), false);
+            return 1;
         } else {
-            if (ItsOursMod.INSTANCE.getClaimList().contains(newName)) throw new SimpleCommandExceptionType(TextComponentUtil.error("Claim name is already taken")).create();
+            src.sendError(Text.translatable("text.itsours.commands.rename.error"));
+            return -1;
         }
-        if (AbstractClaim.isNameInvalid(newName)) throw new SimpleCommandExceptionType(TextComponentUtil.error("Claim name is to long or contains invalid characters")).create();
-        TextComponent text = Component.text("Changed name of ").color(Color.YELLOW)
-                .append(Component.text(claim.getName()).color(Color.ORANGE))
-                .append(Component.text(" to ").color(Color.YELLOW))
-                .append(Component.text(newName).color(Color.ORANGE));
-        ((ClaimPlayer)source.getPlayer()).sendMessage(text);
-        claim.setName(newName);
-        return 1;
     }
 
 }
-

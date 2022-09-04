@@ -2,104 +2,119 @@ package me.drex.itsours.command;
 
 import com.mojang.brigadier.arguments.StringArgumentType;
 import com.mojang.brigadier.builder.LiteralArgumentBuilder;
-import com.mojang.brigadier.builder.RequiredArgumentBuilder;
 import com.mojang.brigadier.exceptions.CommandSyntaxException;
+import com.mojang.brigadier.exceptions.DynamicCommandExceptionType;
 import com.mojang.brigadier.exceptions.SimpleCommandExceptionType;
-import me.drex.itsours.ItsOursMod;
+import me.drex.itsours.ItsOurs;
 import me.drex.itsours.claim.AbstractClaim;
 import me.drex.itsours.claim.Claim;
+import me.drex.itsours.claim.ClaimList;
 import me.drex.itsours.claim.Subzone;
+import me.drex.itsours.claim.permission.PermissionManager;
+import me.drex.itsours.claim.permission.util.Modify;
+import me.drex.itsours.command.argument.ClaimArgument;
 import me.drex.itsours.user.ClaimPlayer;
 import me.drex.itsours.user.PlayerList;
 import me.drex.itsours.user.Settings;
-import me.drex.itsours.util.Color;
-import me.drex.itsours.util.TextComponentUtil;
-import net.kyori.adventure.text.Component;
+import me.drex.itsours.util.ClaimBox;
+import me.lucko.fabric.api.permissions.v0.Permissions;
 import net.minecraft.server.command.ServerCommandSource;
-import net.minecraft.util.math.BlockPos;
+import net.minecraft.server.network.ServerPlayerEntity;
+import net.minecraft.text.Text;
 
+import java.util.Comparator;
 import java.util.Optional;
 import java.util.UUID;
 
-public class CreateCommand extends Command {
+import static net.minecraft.server.command.CommandManager.argument;
 
+public class CreateCommand extends AbstractCommand {
+
+    public static final CommandSyntaxException SELECT_FIRST = new SimpleCommandExceptionType(Text.translatable("text.itsours.commands.create.selectFirst")).create();
+    public static final DynamicCommandExceptionType INTERSECTS = new DynamicCommandExceptionType(name -> Text.translatable("text.itsours.commands.create.intersects", name));
+    public static final DynamicCommandExceptionType LIMIT = new DynamicCommandExceptionType(name -> Text.translatable("text.itsours.commands.create.limit", name));
     private static final int MAX_CHECK = 100;
 
-    public static void register(LiteralArgumentBuilder<ServerCommandSource> literal) {
-        RequiredArgumentBuilder<ServerCommandSource, String> name = RequiredArgumentBuilder.argument("name", StringArgumentType.word());
-        name.executes(ctx -> create(ctx.getSource(), StringArgumentType.getString(ctx, "name")));
-        LiteralArgumentBuilder<ServerCommandSource> command = LiteralArgumentBuilder.literal("create");
-        command.executes(ctx -> create(ctx.getSource(), ctx.getSource().getPlayer().getEntityName()));
-        command.then(name);
-        literal.then(command);
+    public static final CreateCommand INSTANCE = new CreateCommand();
+
+    public static final String LITERAL = "create";
+
+    private CreateCommand() {
+        super(LITERAL);
     }
 
-    public static int create(ServerCommandSource source, String name) throws CommandSyntaxException {
-        ItsOursMod mod = ItsOursMod.INSTANCE;
-        UUID uuid = source.getPlayer().getUuid();
-        //TODO: Make configurable
+    @Override
+    protected void register(LiteralArgumentBuilder<ServerCommandSource> literal) {
+        literal.then(
+                argument("name", StringArgumentType.word())
+                        .executes(ctx -> executeCreate(ctx.getSource(), StringArgumentType.getString(ctx, "name")))
+        ).executes(ctx -> executeCreate(ctx.getSource(), ctx.getSource().getName()));
+    }
+
+    private int executeCreate(ServerCommandSource src, String claimName) throws CommandSyntaxException {
+        // TODO: Make configurable
         int limit = 3;
-        if (hasPermission(source, "itsours.max.bypass")) {
+        if (ItsOurs.hasPermission(src, "max.bypass")) {
             limit = Integer.MAX_VALUE;
         } else {
             for (int i = 0; i < MAX_CHECK; i++) {
-                if (hasPermission(source, "itsours.max." + i)) {
+                if (ItsOurs.hasPermission(src, "max." + i)) {
                     limit = Math.max(limit, i);
                 }
             }
         }
-        if (mod.getClaimList().get(uuid).stream().filter(claim -> claim instanceof Claim).count() >= limit) {
-            throw new SimpleCommandExceptionType(TextComponentUtil.error("You can't have more than " + limit + " claims")).create();
-        }
-        ClaimPlayer claimPlayer = (ClaimPlayer) source.getPlayer();
-        if (claimPlayer.arePositionsSet()) {
-            BlockPos min = new BlockPos(claimPlayer.getLeftPosition());
-            min = new BlockPos(min.getX(), source.getWorld().getBottomY(), min.getZ());
-            BlockPos max = new BlockPos(claimPlayer.getRightPosition());
-            max = new BlockPos(max.getX(), source.getWorld().getTopY(), max.getZ());
-            if (AbstractClaim.isNameInvalid(name))
-                throw new SimpleCommandExceptionType(TextComponentUtil.error("Claim name is to long or contains invalid characters")).create();
-            AbstractClaim claim = new Claim(name, uuid, min, max, source.getWorld(), null);
-            AbstractClaim show = claim;
-            if (claim.intersects().isPresent()) {
-                Optional<AbstractClaim> parent = mod.getClaimList().get(source.getWorld(), min);
-                if (parent.isPresent() && parent.get().contains(max)) {
-                    if (parent.get().getDepth() > 2)
-                        throw new SimpleCommandExceptionType(TextComponentUtil.error("You can't create subzones with a depth higher than 3")).create();
-                    validatePermission(parent.get(), uuid, "modify.subzone");
-                    for (Subzone subzone : parent.get().getSubzones()) {
-                        if (subzone.getName().equals(name))
-                            throw new SimpleCommandExceptionType(TextComponentUtil.error("Claim name is already taken")).create();
-                    }
-                    claim = new Subzone(name, uuid, min, max, source.getWorld(), null, parent.get());
-                    show = parent.get();
-                } else {
-                    throw new SimpleCommandExceptionType(TextComponentUtil.error("Claim couldn't be created, because it would overlap with another claim")).create();
-                }
+
+        ServerPlayerEntity player = src.getPlayer();
+        UUID uuid = player.getUuid();
+        ClaimPlayer claimPlayer = (ClaimPlayer) player;
+        if (AbstractClaim.isNameInvalid(claimName)) throw ClaimArgument.INVALID_NAME;
+        if (!claimPlayer.arePositionsSet()) throw SELECT_FIRST;
+        ClaimBox selectedBox = ClaimBox.create(claimPlayer.getFirstPosition().withY(src.getWorld().getBottomY()), claimPlayer.getSecondPosition().withY(src.getWorld().getTopY()));
+        Optional<AbstractClaim> optional = ClaimList.INSTANCE.getClaims().stream().filter((claim) ->
+                claim.getDimension().equals(player.getWorld().getRegistryKey()) &&
+                        selectedBox.intersects(claim.getBox())
+        ).max(Comparator.comparingInt(AbstractClaim::getDepth));
+        if (optional.isPresent()) {
+            AbstractClaim intersectingClaim = optional.get();
+            if (intersectingClaim.getBox().contains(selectedBox)) {
+                return createSubzone(src, claimName, intersectingClaim, selectedBox);
             } else {
-                if (PlayerList.get(uuid, Settings.BLOCKS) < claim.getArea())
-                    throw new SimpleCommandExceptionType(TextComponentUtil.error("You need " + (claim.getArea() - PlayerList.get(uuid, Settings.BLOCKS)) + " more claim blocks")).create();
-                if (mod.getClaimList().contains(name))
-                    throw new SimpleCommandExceptionType(TextComponentUtil.error("Claim name is already taken")).create();
-                PlayerList.set(uuid, Settings.BLOCKS, PlayerList.get(uuid, Settings.BLOCKS) - claim.getArea());
-                BlockPos size = claim.getSize();
-                ((ClaimPlayer) source.getPlayer()).sendMessage(Component.text("Claim " + name + " has been created (" + size.getX() + " x " + size.getY() + " x " + size.getZ() + ")").color(Color.LIGHT_GREEN));
+                throw INTERSECTS.create(intersectingClaim.getFullName());
             }
-            if (claimPlayer.getLastShowClaim() != null) claimPlayer.getLastShowClaim().show(source.getPlayer(), false);
-            claimPlayer.setLastShow(show, source.getPlayer().getBlockPos(), source.getWorld());
-            mod.getClaimList().add(claim);
-            show.show(source.getPlayer(), true);
-
-
-            //reset positions
-            claimPlayer.setLeftPosition(null);
-            claimPlayer.setRightPosition(null);
-            claimPlayer.setSelecting(false);
-            return 1;
-        } else {
-            claimPlayer.sendMessage(Component.text("You need to select the corners of your claim with a golden shovel (left- / rightclick) first.").color(Color.RED));
-            return 0;
         }
-
+        if (ClaimList.INSTANCE.getClaimsFrom(src.getPlayer().getUuid()).stream().filter(claim -> claim instanceof Claim).toList().size() >= limit) {
+            throw LIMIT.create(limit);
+        }
+        // Main claim
+        Claim claim = new Claim(claimName, uuid, selectedBox, src.getWorld());
+        int requiredBlocks = selectedBox.getArea();
+        // Check and remove claim blocks
+        int blocks = PlayerList.get(uuid, Settings.BLOCKS);
+        if (requiredBlocks > blocks) throw ExpandCommand.MISSING_CLAIM_BLOCKS.create(requiredBlocks - blocks);
+        if (ClaimList.INSTANCE.getClaim(claimName).isPresent()) throw ClaimArgument.NAME_TAKEN;
+        PlayerList.set(uuid, Settings.BLOCKS, blocks - requiredBlocks);
+        ClaimList.INSTANCE.addClaim(claim);
+        claimPlayer.setLastShow(claim, src.getPlayer().getBlockPos(), src.getWorld());
+        claim.show(player, true);
+        // reset positions
+        claimPlayer.resetSelection();
+        return 1;
     }
+
+    private int createSubzone(ServerCommandSource src, String claimName, AbstractClaim parent, ClaimBox claimBox) throws CommandSyntaxException {
+        // Subzone
+        ServerPlayerEntity player = src.getPlayer();
+        for (Subzone subzone : parent.getSubzones()) {
+            if (subzone.getBox().intersects(claimBox)) throw INTERSECTS.create(subzone.getFullName());
+            if (subzone.getName().equals(claimName)) throw ClaimArgument.NAME_TAKEN;
+        }
+        validatePermission(src, parent, PermissionManager.MODIFY, Modify.SUBZONE.buildNode());
+        Subzone subzone = new Subzone(claimName, player.getUuid(), ClaimBox.create(claimBox.getMin().withY(parent.getBox().getMinY()), claimBox.getMax().withY(parent.getBox().getMaxY())), player.getWorld(), parent);
+        ClaimList.INSTANCE.addClaim(subzone);
+        parent.getMainClaim().show(player, true);
+        // reset positions
+        ((ClaimPlayer) player).resetSelection();
+        return 1;
+    }
+
 }

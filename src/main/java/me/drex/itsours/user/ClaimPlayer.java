@@ -1,9 +1,7 @@
 package me.drex.itsours.user;
 
 import me.drex.itsours.claim.AbstractClaim;
-import net.kyori.adventure.text.Component;
 import net.minecraft.server.world.ServerWorld;
-import net.minecraft.text.Text;
 import net.minecraft.util.math.BlockPos;
 
 public interface ClaimPlayer {
@@ -18,25 +16,14 @@ public interface ClaimPlayer {
 
     boolean arePositionsSet();
 
-    void setLeftPosition(BlockPos pos);
+    void resetSelection();
 
-    void setRightPosition(BlockPos pos);
+    void setSecondPosition(BlockPos pos);
 
-    BlockPos getRightPosition();
+    void setFirstPosition(BlockPos pos);
 
-    BlockPos getLeftPosition();
+    BlockPos getSecondPosition();
 
-    void setSelecting(boolean value);
+    BlockPos getFirstPosition();
 
-    boolean getSelecting();
-
-    void sendError(Component component);
-
-    void sendError(String error);
-
-    void sendMessage(Text text);
-
-    void sendMessage(Component component);
-
-    void sendActionbar(Component component);
 }

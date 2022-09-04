@@ -1,69 +1,68 @@
 package me.drex.itsours.command;
 
 import com.mojang.brigadier.builder.LiteralArgumentBuilder;
-import com.mojang.brigadier.builder.RequiredArgumentBuilder;
 import com.mojang.brigadier.exceptions.CommandSyntaxException;
 import me.drex.itsours.claim.AbstractClaim;
 import me.drex.itsours.claim.permission.Permission;
-import me.drex.itsours.claim.permission.PermissionList;
-import me.drex.itsours.claim.permission.util.context.Priority;
-import me.drex.itsours.claim.permission.util.node.util.Node;
-import me.drex.itsours.user.ClaimPlayer;
-import me.drex.itsours.util.Color;
-import net.kyori.adventure.text.Component;
-import net.kyori.adventure.text.TextComponent;
+import me.drex.itsours.claim.permission.PermissionManager;
+import me.drex.itsours.claim.permission.context.GlobalContext;
+import me.drex.itsours.claim.permission.node.Node;
+import me.drex.itsours.claim.permission.util.Modify;
+import me.drex.itsours.claim.permission.util.Value;
+import me.drex.itsours.command.argument.ClaimArgument;
+import me.drex.itsours.command.argument.PermissionArgument;
 import net.minecraft.server.command.ServerCommandSource;
+import net.minecraft.text.Text;
 
-public class SettingCommand extends Command {
+import static net.minecraft.server.command.CommandManager.literal;
 
-    public static void register(LiteralArgumentBuilder<ServerCommandSource> literal) {
-        RequiredArgumentBuilder<ServerCommandSource, String> claim = ownClaimArgument();
-        {
-            RequiredArgumentBuilder<ServerCommandSource, String> setting = settingArgument();
-            setting.executes(ctx -> checkSetting(ctx.getSource(), getClaim(ctx), getSetting(ctx)));
-            LiteralArgumentBuilder<ServerCommandSource> check = LiteralArgumentBuilder.literal("check");
-            check.then(setting);
-            claim.then(check);
-        }
-        {
-            RequiredArgumentBuilder<ServerCommandSource, String> value = permissionValueArgument();
-            value.executes(ctx -> setSetting(ctx.getSource(), getClaim(ctx), getSetting(ctx), getPermissionValue(ctx)));
-            RequiredArgumentBuilder<ServerCommandSource, String> setting = settingArgument();
-            LiteralArgumentBuilder<ServerCommandSource> set = LiteralArgumentBuilder.literal("set");
-            setting.then(value);
-            set.then(setting);
-            claim.then(set);
-        }
-        LiteralArgumentBuilder<ServerCommandSource> command = LiteralArgumentBuilder.literal("setting");
-        command.executes(ctx -> listSettings(ctx.getSource()));
-        command.then(claim);
-        literal.then(command);
+public class SettingCommand extends AbstractCommand {
+
+    public static final SettingCommand INSTANCE = new SettingCommand();
+
+    public SettingCommand() {
+        super("settings");
     }
 
-    public static int checkSetting(ServerCommandSource source, AbstractClaim claim, Permission setting) throws CommandSyntaxException {
-        validatePermission(claim, source.getPlayer().getUuid(), "modify.setting");
-        ((ClaimPlayer) source.getPlayer()).sendMessage(Component.text("Setting (").color(Color.ORANGE)
-                .append(Component.text(setting.asString()).color(Color.YELLOW))
-                .append(Component.text("): ").color(Color.ORANGE))
-                .append((claim.getPermissionManager().settings.getPermission(claim, setting, Priority.SETTING).getValue().format())));
+    @Override
+    protected void register(LiteralArgumentBuilder<ServerCommandSource> literal) {
+        literal.then(
+                ClaimArgument.ownClaims()
+                        .then(
+                                literal("check").then(
+                                        PermissionArgument.permission()
+                                                .executes(ctx -> executeCheck(ctx.getSource(), ClaimArgument.getClaim(ctx), PermissionArgument.getPermission(ctx)))
+                                )
+                        ).then(
+                                literal("set").then(
+                                        PermissionArgument.permission().then(
+                                                PermissionArgument.value()
+                                                        .executes(ctx -> executeSet(ctx.getSource(), ClaimArgument.getClaim(ctx), PermissionArgument.getPermission(ctx), PermissionArgument.getValue(ctx)))
+                                        )
+                                )
+                        ).then(
+                                literal("unset").then(
+                                        PermissionArgument.permission()
+                                                .executes(ctx -> executeSet(ctx.getSource(), ClaimArgument.getClaim(ctx), PermissionArgument.getPermission(ctx), Value.UNSET))
+                                )
+                        )
+        );
+    }
+
+    public int executeSet(ServerCommandSource src, AbstractClaim claim, Permission permission, Value value) throws CommandSyntaxException {
+        validatePermission(src, claim, PermissionManager.MODIFY, Modify.SETTING.buildNode());
+        permission.validateContext(new Node.ChangeContext(claim, GlobalContext.INSTANCE, value, src));
+        claim.getPermissionHolder().getSettings().set(permission, value);
+        src.sendFeedback(Text.translatable("text.itsours.commands.globalSetting.set",
+                permission.asString(), claim.getFullName(), value.format()
+        ), false);
         return 1;
     }
 
-    public static int setSetting(ServerCommandSource source, AbstractClaim claim, Permission setting, Permission.Value value) throws CommandSyntaxException {
-        validatePermission(claim, source.getPlayer().getUuid(), "modify.setting");
-        claim.getPermissionManager().settings.setPermission(setting.asString(), value);
-        ((ClaimPlayer) source.getPlayer()).sendMessage(Component.text("Set setting ").color(Color.YELLOW)
-                .append(Component.text(setting.asString())).color(Color.ORANGE)
-                .append(Component.text(" to ")).color(Color.YELLOW).append(value.format()));
-        return 0;
-    }
-
-    public static int listSettings(ServerCommandSource source) throws CommandSyntaxException {
-        TextComponent.Builder builder = Component.text().content("Settings:\n").color(Color.ORANGE);
-        for (Node node : PermissionList.setting.getNodes()) {
-            builder.append(Component.text(node.getId()).color(Color.LIGHT_GREEN), Component.text(": " + node.getInformation() + "\n").color(Color.LIGHT_GRAY));
-        }
-        ((ClaimPlayer) source.getPlayer()).sendMessage(builder.build());
+    public int executeCheck(ServerCommandSource src, AbstractClaim claim, Permission permission) throws CommandSyntaxException {
+        validatePermission(src, claim, PermissionManager.MODIFY, Modify.SETTING.buildNode());
+        Value value = claim.getPermissionHolder().getSettings().get(permission);
+        src.sendFeedback(Text.translatable("text.itsours.commands.globalSetting.check", permission.asString(), claim.getFullName(), value.format()), false);
         return 1;
     }
 

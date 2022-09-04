@@ -1,43 +1,48 @@
 package me.drex.itsours.command;
 
+import com.mojang.authlib.GameProfile;
 import com.mojang.brigadier.builder.LiteralArgumentBuilder;
-import com.mojang.brigadier.builder.RequiredArgumentBuilder;
-import com.mojang.brigadier.context.CommandContext;
 import com.mojang.brigadier.exceptions.CommandSyntaxException;
-import me.drex.itsours.ItsOursMod;
+import me.drex.itsours.ItsOurs;
 import me.drex.itsours.claim.AbstractClaim;
-import me.drex.itsours.user.ClaimPlayer;
-import me.drex.itsours.util.Color;
-import net.kyori.adventure.text.Component;
-import net.kyori.adventure.text.TextComponent;
+import me.drex.itsours.command.argument.ClaimArgument;
+import me.drex.itsours.util.Components;
+import me.lucko.fabric.api.permissions.v0.Permissions;
+import net.minecraft.command.argument.EntityArgumentType;
+import net.minecraft.command.argument.GameProfileArgumentType;
 import net.minecraft.server.command.ServerCommandSource;
+import net.minecraft.text.Text;
+import net.minecraft.text.Texts;
 
-public class SetOwnerCommand extends Command {
+import java.util.Collection;
 
-    public static void register(LiteralArgumentBuilder<ServerCommandSource> literal) {
-        RequiredArgumentBuilder<ServerCommandSource, String> newOwner = playerArgument("player");
-        newOwner.executes(SetOwnerCommand::setOwner);
-        RequiredArgumentBuilder<ServerCommandSource, String> claim = allClaimArgument();
-        claim.then(newOwner);
-        LiteralArgumentBuilder<ServerCommandSource> command = LiteralArgumentBuilder.literal("setowner");
-        command.requires(src -> hasPermission(src, "itsours.setowner"));
-        command.then(claim);
-        literal.then(command);
+import static net.minecraft.server.command.CommandManager.argument;
+
+public class SetOwnerCommand extends AbstractCommand {
+
+    public static final SetOwnerCommand INSTANCE = new SetOwnerCommand();
+
+    private SetOwnerCommand() {
+        super("setOwner");
     }
 
-    public static int setOwner(CommandContext<ServerCommandSource> ctx) throws CommandSyntaxException {
-        AbstractClaim claim = getClaim(ctx);
-        getGameProfile(ctx, "player", profile -> {
-            claim.setOwner(profile.getId());
-            ItsOursMod.INSTANCE.getClaimList().update();
-            TextComponent text = Component.text("Set owner of ").color(Color.YELLOW)
-                    .append(Component.text(claim.getName()).color(Color.ORANGE))
-                    .append(Component.text(" to ").color(Color.YELLOW))
-                    .append(Component.text(profile.getName()).color(Color.ORANGE));
-            ((ClaimPlayer)ctx.getSource().getPlayer()).sendMessage(text);
-        });
+    @Override
+    protected void register(LiteralArgumentBuilder<ServerCommandSource> literal) {
+        literal.then(
+                ClaimArgument.allClaims().then(
+                        argument("owner", GameProfileArgumentType.gameProfile())
+                                .executes(ctx -> execute(ctx.getSource(), ClaimArgument.getClaim(ctx), GameProfileArgumentType.getProfileArgument(ctx, "owner")))
+                )
+        ).requires(src -> ItsOurs.hasPermission(src, "setowner"));
+    }
+
+    private int execute(ServerCommandSource src, AbstractClaim claim, Collection<GameProfile> targets) throws CommandSyntaxException {
+        if (targets.isEmpty()) throw EntityArgumentType.PLAYER_NOT_FOUND_EXCEPTION.create();
+        if (targets.size() > 1) throw EntityArgumentType.TOO_MANY_PLAYERS_EXCEPTION.create();
+        GameProfile profile = targets.iterator().next();
+        claim.setOwner(profile.getId());
+        src.sendFeedback(Text.translatable("text.itsours.commands.setOwner", claim.getFullName(), Components.toText(profile)), false);
         return 1;
     }
 
 }
-

@@ -1,11 +1,10 @@
 package me.drex.itsours.mixin;
 
-import me.drex.itsours.ItsOursMod;
 import me.drex.itsours.claim.AbstractClaim;
+import me.drex.itsours.claim.ClaimList;
 import net.minecraft.network.ClientConnection;
 import net.minecraft.server.PlayerManager;
 import net.minecraft.server.network.ServerPlayerEntity;
-import net.minecraft.server.world.ServerWorld;
 import org.spongepowered.asm.mixin.Mixin;
 import org.spongepowered.asm.mixin.injection.At;
 import org.spongepowered.asm.mixin.injection.Inject;
@@ -24,8 +23,8 @@ public abstract class PlayerManagerMixin {
             )
     )
     public void onPlayerConnect(ClientConnection connection, ServerPlayerEntity player, CallbackInfo ci) {
-        Optional<AbstractClaim> optional = ItsOursMod.INSTANCE.getClaimList().get((ServerWorld) player.world, player.getBlockPos());
-        optional.ifPresent(claim -> claim.onEnter(Optional.empty(), player));
+        Optional<AbstractClaim> optional = ClaimList.INSTANCE.getClaimAt(player);
+        optional.ifPresent(claim -> claim.onEnter(null, player));
     }
 
 }

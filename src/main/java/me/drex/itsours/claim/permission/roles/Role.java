@@ -1,25 +1,47 @@
 package me.drex.itsours.claim.permission.roles;
 
-import me.drex.itsours.claim.permission.util.PermissionMap;
+import me.drex.itsours.claim.permission.holder.PermissionHolder;
 import net.minecraft.nbt.NbtCompound;
+import org.jetbrains.annotations.NotNull;
 
-public class Role {
+import java.util.List;
 
-    private final PermissionMap permissions = new PermissionMap(new NbtCompound());
+public class Role implements Comparable<Role> {
 
-    public Role(NbtCompound tag) {
-        this.fromNBT(tag);
+    private final String id;
+    private final PermissionHolder permissions;
+
+    public Role(String id, PermissionHolder permissions) {
+        this.id = id;
+        this.permissions = permissions;
     }
 
-    public void fromNBT(NbtCompound tag) {
-        permissions.fromNBT(tag);
+    public Role(String id, NbtCompound tag) {
+        this(id, PermissionHolder.storage());
+        this.load(tag);
     }
 
-    public NbtCompound toNBT() {
-        return permissions.toNBT();
+    public void load(NbtCompound tag) {
+        permissions.load(tag);
     }
 
-    public PermissionMap permissions() {
+    public String getId() {
+        return id;
+    }
+
+    public NbtCompound save() {
+        return permissions.save();
+    }
+
+    public PermissionHolder permissions() {
         return this.permissions;
     }
+
+    @Override
+    public int compareTo(@NotNull Role other) {
+        List<Role> orderedRoles = RoleManager.INSTANCE.getOrderedRoles();
+        // Compare index in role orders (lower is better)
+        return Integer.compare(orderedRoles.indexOf(other), orderedRoles.indexOf(this));
+    }
+
 }

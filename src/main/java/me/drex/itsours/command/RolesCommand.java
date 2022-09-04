@@ -1,112 +1,143 @@
 package me.drex.itsours.command;
 
+import com.mojang.brigadier.arguments.IntegerArgumentType;
 import com.mojang.brigadier.arguments.StringArgumentType;
 import com.mojang.brigadier.builder.LiteralArgumentBuilder;
-import com.mojang.brigadier.builder.RequiredArgumentBuilder;
 import com.mojang.brigadier.exceptions.CommandSyntaxException;
 import com.mojang.brigadier.exceptions.SimpleCommandExceptionType;
-import me.drex.itsours.ItsOursMod;
+import me.drex.itsours.ItsOurs;
 import me.drex.itsours.claim.permission.Permission;
+import me.drex.itsours.claim.permission.context.RoleContext;
+import me.drex.itsours.claim.permission.holder.PermissionHolder;
+import me.drex.itsours.claim.permission.node.Node;
 import me.drex.itsours.claim.permission.roles.Role;
-import me.drex.itsours.user.ClaimPlayer;
-import me.drex.itsours.util.Color;
-import net.kyori.adventure.text.Component;
-import net.kyori.adventure.text.TextComponent;
-import net.minecraft.nbt.NbtCompound;
+import me.drex.itsours.claim.permission.roles.RoleManager;
+import me.drex.itsours.claim.permission.util.Value;
+import me.drex.itsours.command.argument.PermissionArgument;
+import me.drex.itsours.command.argument.RoleArgument;
+import me.lucko.fabric.api.permissions.v0.Permissions;
 import net.minecraft.server.command.ServerCommandSource;
-import net.minecraft.text.LiteralText;
+import net.minecraft.text.ClickEvent;
+import net.minecraft.text.HoverEvent;
+import net.minecraft.text.Text;
+import net.minecraft.util.Formatting;
 
-import java.util.Map;
+import java.util.List;
 
+import static net.minecraft.server.command.CommandManager.argument;
+import static net.minecraft.server.command.CommandManager.literal;
 
-public class RolesCommand extends Command {
+public class RolesCommand extends AbstractCommand {
 
-    public static void register(LiteralArgumentBuilder<ServerCommandSource> literal) {
-        LiteralArgumentBuilder<ServerCommandSource> command = LiteralArgumentBuilder.literal("roles");
-        command.executes(ctx -> listRoles(ctx.getSource()));
-        {
-            RequiredArgumentBuilder<ServerCommandSource, String> name = RequiredArgumentBuilder.argument("name", StringArgumentType.word());
-            name.executes(ctx -> addRole(ctx.getSource(), StringArgumentType.getString(ctx, "name")));
-            LiteralArgumentBuilder<ServerCommandSource> add = LiteralArgumentBuilder.literal("add");
-            add.requires(src -> hasPermission(src, "itsours.roles.add"));
-            add.then(name);
-            command.then(add);
+    public static final RolesCommand INSTANCE = new RolesCommand();
+
+    public static final CommandSyntaxException ALREADY_EXISTS = new SimpleCommandExceptionType(Text.translatable("text.itsours.argument.role.already_exists")).create();
+    public static final String LITERAL = "roles";
+    public static final String LITERAL_UPDATE_ORDER = "updateOrder";
+
+    private RolesCommand() {
+        super(LITERAL);
+    }
+
+    @Override
+    protected void register(LiteralArgumentBuilder<ServerCommandSource> literal) {
+        literal
+                .then(
+                        literal(LITERAL_UPDATE_ORDER)
+                                .then(
+                                        RoleArgument.roles()
+                                                .then(
+                                                        argument("offset", IntegerArgumentType.integer())
+                                                                .executes(ctx -> executeUpdateOffset(ctx.getSource(), RoleArgument.getRole(ctx), IntegerArgumentType.getInteger(ctx, "offset")))
+                                                )
+                                )
+                )
+                .then(
+                        literal("add")
+                                .then(
+                                        argument("role", StringArgumentType.string())
+                                                .executes(ctx -> executeAddRole(ctx.getSource(), StringArgumentType.getString(ctx, "role")))
+                                )
+                )
+                .then(
+                        literal("remove")
+                                .then(
+                                        RoleArgument.roles()
+                                                .executes(ctx -> executeRemoveRole(ctx.getSource(), RoleArgument.getRole(ctx)))
+                                )
+                )
+                .then(
+                        literal("set")
+                                .then(
+                                        RoleArgument.roles()
+                                                .then(
+                                                        PermissionArgument.permission()
+                                                                .then(PermissionArgument.value()
+                                                                        .executes(ctx -> executeSet(ctx.getSource(), RoleArgument.getRole(ctx), PermissionArgument.getPermission(ctx), PermissionArgument.getValue(ctx))))
+                                                )
+                                )
+                )
+                .then(
+                        literal("unset")
+                                .then(
+                                        RoleArgument.roles()
+                                                .then(
+                                                        PermissionArgument.permission()
+                                                                .executes(ctx -> executeSet(ctx.getSource(), RoleArgument.getRole(ctx), PermissionArgument.getPermission(ctx), Value.UNSET)))
+                                )
+                )
+                .requires(src -> ItsOurs.hasPermission(src, "roles"))
+                .executes(ctx -> executeListRoles(ctx.getSource()));
+    }
+
+    private int executeSet(ServerCommandSource src, Role role, Permission permission, Value value) throws CommandSyntaxException {
+        permission.validateContext(new Node.ChangeContext(null, new RoleContext(role), value, src));
+        role.permissions().set(permission, value);
+        src.sendFeedback(Text.translatable("text.itsours.commands.roles.set", permission.asString(), RoleManager.INSTANCE.getName(role), value.format()), false);
+        return 1;
+    }
+
+    private int executeListRoles(ServerCommandSource src) {
+        List<Role> orderedRoles = RoleManager.INSTANCE.getOrderedRoles();
+        src.sendFeedback(Text.translatable("text.itsours.commands.roles"), false);
+        for (int i = 0; i < orderedRoles.size(); i++) {
+            boolean first = i == 0;
+            boolean last = i == orderedRoles.size() - 1;
+            Role role = orderedRoles.get(i);
+            src.sendFeedback(Text.translatable("text.itsours.commands.roles.entry",
+                    RoleManager.INSTANCE.getName(role)
+                            .styled(style -> style.withHoverEvent(new HoverEvent(HoverEvent.Action.SHOW_TEXT, role.permissions().toText()))),
+                    Text.translatable("text.itsours.commands.roles.entry.down")
+                            .styled(
+                                    style -> style.withClickEvent(new ClickEvent(ClickEvent.Action.RUN_COMMAND, String.format("/%s %s %s %s %d", CommandManager.LITERAL, LITERAL, LITERAL_UPDATE_ORDER, role.getId(), 1)))
+                            ).formatted(last ? Formatting.WHITE : Formatting.AQUA),
+                    Text.translatable("text.itsours.commands.roles.entry.up")
+                            .styled(
+                                    style -> style.withClickEvent(new ClickEvent(ClickEvent.Action.RUN_COMMAND, String.format("/%s %s %s %s %d", CommandManager.LITERAL, LITERAL, LITERAL_UPDATE_ORDER, role.getId(), -1)))
+                            ).formatted(first ? Formatting.WHITE : Formatting.AQUA)
+            ), false);
         }
-        {
-            RequiredArgumentBuilder<ServerCommandSource, String> name = roleArgument();
-            name.executes(ctx -> removeRole(ctx.getSource(), StringArgumentType.getString(ctx, "name")));
-            LiteralArgumentBuilder<ServerCommandSource> remove = LiteralArgumentBuilder.literal("remove");
-            remove.requires(src -> hasPermission(src, "itsours.roles.remove"));
-            remove.then(name);
-            command.then(remove);
-        }
-        {
-            RequiredArgumentBuilder<ServerCommandSource, String> value = permissionValueArgument();
-            value.executes(ctx -> setPermission(ctx.getSource(), StringArgumentType.getString(ctx, "name"), getPermission(ctx), getPermissionValue(ctx)));
-            RequiredArgumentBuilder<ServerCommandSource, String> perm = permissionArgument();
-            RequiredArgumentBuilder<ServerCommandSource, String> name = roleArgument();
-            name.executes(ctx -> listPermission(ctx.getSource(), StringArgumentType.getString(ctx, "name")));
-            LiteralArgumentBuilder<ServerCommandSource> permission = LiteralArgumentBuilder.literal("permission");
-            permission.requires(src -> hasPermission(src, "itsours.roles.permission"));
-            perm.then(value);
-            name.then(perm);
-            permission.then(name);
-            command.then(permission);
-        }
-
-        literal.then(command);
+        return orderedRoles.size();
     }
 
-    public static int addRole(ServerCommandSource source, String name) throws CommandSyntaxException {
-        if (ItsOursMod.INSTANCE.getRoleManager().containsKey(name))
-            throw new SimpleCommandExceptionType(new LiteralText("A role with that name already exists")).create();
-        ItsOursMod.INSTANCE.getRoleManager().put(name, new Role(new NbtCompound()));
-        ((ClaimPlayer) source.getPlayer()).sendMessage(Component.text("Role ").color(Color.YELLOW)
-                .append(Component.text(name).color(Color.ORANGE).append(Component.text(" has been added").color(Color.YELLOW))));
-
+    private int executeAddRole(ServerCommandSource src, String roleId) throws CommandSyntaxException {
+        Role role = RoleManager.INSTANCE.getRole(roleId);
+        if (role != null) throw ALREADY_EXISTS;
+        role = new Role(roleId, PermissionHolder.storage());
+        RoleManager.INSTANCE.addRole(role);
+        src.sendFeedback(Text.translatable("text.itsours.commands.roles.add", roleId), false);
         return 1;
     }
 
-    public static int removeRole(ServerCommandSource source, String name) throws CommandSyntaxException {
-        if (!ItsOursMod.INSTANCE.getRoleManager().containsKey(name))
-            throw new SimpleCommandExceptionType(new LiteralText("There is no role with that name")).create();
-        if (name.equals("default") || name.equals("trusted"))
-            throw new SimpleCommandExceptionType(new LiteralText("You can't remove that role")).create();
-        ItsOursMod.INSTANCE.getRoleManager().remove(name);
-        ((ClaimPlayer) source.getPlayer()).sendMessage(Component.text("Role ").color(Color.YELLOW).append(Component.text(name).color(Color.ORANGE).append(Component.text(" has been removed").color(Color.YELLOW))));
+    private int executeRemoveRole(ServerCommandSource src, Role role) {
+        RoleManager.INSTANCE.removeRole(role);
+        src.sendFeedback(Text.translatable("text.itsours.commands.roles.remove", role.getId()), false);
         return 1;
     }
 
-    public static int setPermission(ServerCommandSource source, String name, Permission permission, Permission.Value value) throws CommandSyntaxException {
-        if (!ItsOursMod.INSTANCE.getRoleManager().containsKey(name))
-            throw new SimpleCommandExceptionType(new LiteralText("There is no role with that name")).create();
-        Role role = ItsOursMod.INSTANCE.getRoleManager().get(name);
-        role.permissions().setPermission(permission.asString(), value);
-        ((ClaimPlayer) source.getPlayer()).sendMessage(Component.text("Set ").color(Color.YELLOW)
-                .append(Component.text(permission.asString()).color(Color.ORANGE)).append(Component.text(" for ").color(Color.YELLOW))
-                .append(Component.text(name).color(Color.ORANGE)
-                        .append(Component.text(" to ").color(Color.YELLOW)).append(value.format())));
-        return 1;
+    private int executeUpdateOffset(ServerCommandSource src, Role role, int offset) {
+        RoleManager.INSTANCE.updateRoleOrder(role, offset);
+        return executeListRoles(src);
     }
-
-    public static int listPermission(ServerCommandSource source, String name) throws CommandSyntaxException {
-        if (!ItsOursMod.INSTANCE.getRoleManager().containsKey(name))
-            throw new SimpleCommandExceptionType(new LiteralText("There is no role with that name")).create();
-        Role role = ItsOursMod.INSTANCE.getRoleManager().get(name);
-        ((ClaimPlayer) source.getPlayer()).sendMessage(Component.text(name).color(Color.YELLOW).append(Component.text("\n")).append(role.permissions().toText()));
-        return 1;
-    }
-
-    public static int listRoles(ServerCommandSource source) throws CommandSyntaxException {
-        TextComponent.Builder builder = Component.text().content("Roles:\n").color(Color.ORANGE);
-        for (Map.Entry<String, Role> entry : ItsOursMod.INSTANCE.getRoleManager().entrySet()) {
-            String name = entry.getKey();
-            Role role = entry.getValue();
-            builder.append(Component.text(name).color(Color.YELLOW).style(style -> style.hoverEvent(net.kyori.adventure.text.event.HoverEvent.showText(role.permissions().toText())))).append(Component.text(" "));
-        }
-        ((ClaimPlayer) source.getPlayer()).sendMessage(builder.build());
-        return 1;
-    }
-
 
 }

@@ -25,7 +25,6 @@
   "mixins": [
     "itsours.mixins.json"
   ],
-
   "depends": {
     "fabricloader": ">=0.9.0",
     "fabric-api-base": "*",

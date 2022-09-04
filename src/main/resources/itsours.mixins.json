@@ -15,13 +15,16 @@
     "FrostWalkerEnchantmentMixin",
     "LecternScreenHandlerMixin",
     "LevelStorageSessionMixin",
+    "NoiseChunkGeneratorAccessor",
     "PlayerEntityInvoker",
     "PlayerEntityMixin",
     "PlayerManagerMixin",
     "ProjectileEntityMixin",
-    "ScreenHandlerMixin",
+    "ScaffoldingBlockMixin",
+    "SculkCatalystBlockEntityMixin",
     "ServerPlayerEntityMixin",
-    "ServerPlayerInteractionManagerMixin"
+    "ServerPlayerInteractionManagerMixin",
+    "TurtleEggBlockMixin"
   ],
   "injectors": {
     "defaultRequire": 1
